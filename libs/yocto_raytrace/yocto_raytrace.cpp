@@ -102,7 +102,13 @@ static vec4f eval_texture(const raytrace_texture* texture, const vec2f& uv,
 // the lens coordinates luv.
 static ray3f eval_camera(const raytrace_camera* camera, const vec2f& image_uv) {
   // YOUR CODE GOES HERE -----------------------
-  return {};
+
+  auto q = vec3f{camera->film.x * (0.5f - image_uv.x),
+      camera->film.y * (image_uv.y - 0.5f), camera->lens};
+  auto e = zero3f;
+  auto d = normalize(-q - e);
+  return ray3f{
+      transform_point(camera->frame, e), transform_direction(camera->frame, d)};
 }
 
 // Eval position
@@ -550,7 +556,13 @@ static vec4f shade_texcoord(const raytrace_scene* scene, const ray3f& ray,
 static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
     int bounce, rng_state& rng, const raytrace_params& params) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0, 0};
+  auto intersection = intersect_scene_bvh(scene, ray);
+  if (!intersection.hit) {
+    return {0, 0, 0, 0};
+  }
+  auto object = scene->instances[intersection.instance];
+  auto color  = object->material->color;
+  return {color.x, color.y, color.z, 1};
 }
 
 // Trace a single ray from the camera using the given algorithm.
@@ -576,6 +588,19 @@ void render_sample(raytrace_state* state, const raytrace_scene* scene,
     const raytrace_camera* camera, const vec2i& ij,
     const raytrace_params& params) {
   // YOUR CODE GOES HERE -----------------------
+
+  auto puv    = rand2f(state->rngs[ij]);
+  auto uv     = vec2f{(ij.x + puv.x) / state->render.imsize().x,
+      (ij.y + puv.y) / state->render.imsize().y};
+  auto ray    = eval_camera(camera, uv);
+  auto shader = get_shader(params);
+  auto sample = shader(scene, ray, 0, state->rngs[ij], params);
+
+  if (max(sample) > params.clamp)
+    sample = sample * (params.clamp / max(sample));
+  state->accumulation[ij] += sample;
+  state->samples[ij] += 1;
+  state->render[ij] = state->accumulation[ij] / state->samples[ij];
 }
 
 // Init a sequence of random number generators.
@@ -603,8 +628,17 @@ void render_samples(raytrace_state* state, const raytrace_scene* scene,
     const raytrace_camera* camera, const raytrace_params& params) {
   if (params.noparallel) {
     // YOUR CODE GOES HERE -----------------------
+    for (auto j = 0; j < state->render.height(); j++) {
+      for (auto i = 0; i < state->render.width(); i++) {
+        render_sample(state, scene, camera, {i, j}, params);
+      }
+    }
   } else {
     // YOUR CODE GOES HERE -----------------------
+    parallel_for(state->render.width(), state->render.height(),
+        [state, scene, camera, &params](int i, int j) {
+          render_sample(state, scene, camera, {i, j}, params);
+        });
   }
 }
 
