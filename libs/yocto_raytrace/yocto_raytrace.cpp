@@ -160,7 +160,19 @@ static vec3f eval_normal(
 static vec2f eval_texcoord(
     const raytrace_shape* shape, int element, const vec2f& uv) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0};
+  if (shape->texcoords.empty()) return uv;
+  if (!shape->triangles.empty()) {
+    auto t = shape->triangles[element];
+    return interpolate_triangle(shape->texcoords[t.x], shape->texcoords[t.y],
+        shape->texcoords[t.z], uv);
+  } else if (!shape->lines.empty()) {
+    auto l = shape->lines[element];
+    return interpolate_line(shape->texcoords[l.x], shape->texcoords[l.y], uv.x);
+  } else if (!shape->points.empty()) {
+    return shape->texcoords[shape->points[element]];
+  } else {
+    return zero2f;
+  }
 }
 
 // Evaluate all environment color.
@@ -575,7 +587,15 @@ static vec4f shade_normal(const raytrace_scene* scene, const ray3f& ray,
 static vec4f shade_texcoord(const raytrace_scene* scene, const ray3f& ray,
     int bounce, rng_state& rng, const raytrace_params& params) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0, 0};
+  auto intersection = intersect_scene_bvh(scene, ray);
+  if (!intersection.hit) {
+    return {0, 0, 0, 0};
+  }
+  auto instance = scene->instances[intersection.instance];
+  auto element  = intersection.element;
+  auto uv       = intersection.uv;
+  return {fmod(eval_texcoord(instance->shape, element, uv).x, 1.0f),
+      fmod(eval_texcoord(instance->shape, element, uv).y, 1.0f), 0, 1};
 }
 
 static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
