@@ -565,7 +565,17 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
 static vec4f shade_eyelight(const raytrace_scene* scene, const ray3f& ray,
     int bounce, rng_state& rng, const raytrace_params& params) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0, 0};
+  auto intersection = intersect_scene_bvh(scene, ray);
+  if (!intersection.hit) {
+    return {0, 0, 0, 0};
+  }
+  auto instance = scene->instances[intersection.instance];
+  auto element  = intersection.element;
+  auto uv       = intersection.uv;
+  auto normal   = transform_direction(
+      instance->frame, eval_normal(instance->shape, element, uv));
+  auto color = instance->material->color * dot(normal, -ray.d);
+  return {color.x, color.y, color.z, 1};
 }
 
 static vec4f shade_normal(const raytrace_scene* scene, const ray3f& ray,
@@ -591,11 +601,11 @@ static vec4f shade_texcoord(const raytrace_scene* scene, const ray3f& ray,
   if (!intersection.hit) {
     return {0, 0, 0, 0};
   }
-  auto instance = scene->instances[intersection.instance];
-  auto element  = intersection.element;
-  auto uv       = intersection.uv;
-  return {fmod(eval_texcoord(instance->shape, element, uv).x, 1.0f),
-      fmod(eval_texcoord(instance->shape, element, uv).y, 1.0f), 0, 1};
+  auto instance  = scene->instances[intersection.instance];
+  auto element   = intersection.element;
+  auto uv        = intersection.uv;
+  auto textcoord = eval_texcoord(instance->shape, element, uv);
+  return {fmod(textcoord.x, 1.0f), fmod(textcoord.y, 1.0f), 0, 1};
 }
 
 static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
