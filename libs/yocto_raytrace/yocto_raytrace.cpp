@@ -131,14 +131,29 @@ static vec3f eval_position(
 // Shape element normal.
 static vec3f eval_element_normal(const raytrace_shape* shape, int element) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0};
+
+  if (!shape->triangles.empty()) {
+    auto t = shape->triangles[element];
+    return triangle_normal(
+        shape->positions[t.x], shape->positions[t.y], shape->positions[t.z]);
+  } else if (!shape->lines.empty()) {
+    auto l = shape->lines[element];
+    return line_tangent(shape->positions[l.x], shape->positions[l.y]);
+  } else if (!shape->points.empty()) {
+    return {0, 0, 1};
+  } else {
+    return {0, 0, 0};
+  }
 }
 
 // Eval normal
 static vec3f eval_normal(
     const raytrace_shape* shape, int element, const vec2f& uv) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0};
+  if (shape->normals.empty()) return eval_element_normal(shape, element);
+  auto t = shape->triangles[element];
+  return normalize(interpolate_triangle(
+      shape->normals[t.x], shape->normals[t.y], shape->normals[t.z], uv));
 }
 
 // Eval texcoord
@@ -544,7 +559,17 @@ static vec4f shade_eyelight(const raytrace_scene* scene, const ray3f& ray,
 static vec4f shade_normal(const raytrace_scene* scene, const ray3f& ray,
     int bounce, rng_state& rng, const raytrace_params& params) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0, 0};
+  auto intersection = intersect_scene_bvh(scene, ray);
+  if (!intersection.hit) {
+    return {0, 0, 0, 0};
+  }
+  auto instance = scene->instances[intersection.instance];
+  auto element  = intersection.element;
+  auto uv       = intersection.uv;
+  auto normal   = transform_direction(
+      instance->frame, eval_normal(instance->shape, element, uv));
+  return {normal.x * 0.5f + 0.5f, normal.y * 0.5f + 0.5f,
+      normal.z * 0.5f + 0.5f, 1};
 }
 
 static vec4f shade_texcoord(const raytrace_scene* scene, const ray3f& ray,
@@ -560,8 +585,8 @@ static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
   if (!intersection.hit) {
     return {0, 0, 0, 0};
   }
-  auto object = scene->instances[intersection.instance];
-  auto color  = object->material->color;
+  auto instance = scene->instances[intersection.instance];
+  auto color    = instance->material->color;
   return {color.x, color.y, color.z, 1};
 }
 
