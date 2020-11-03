@@ -178,7 +178,16 @@ static vec2f eval_texcoord(
 // Evaluate all environment color.
 static vec3f eval_environment(const raytrace_scene* scene, const ray3f& ray) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0};
+  auto emission = zero3f;
+  for (auto environment : scene->environments) {
+    auto local_dir = transform_direction(inverse(environment->frame), ray.d);
+    auto texcoord  = vec2f{atan2(local_dir.z, local_dir.x) / (2 * pif),
+        acos(clamp(local_dir.y, -1.0f, 1.0f)) / pif};
+    if (texcoord.x < 0) texcoord.x += 1;
+    emission += environment->emission *
+                xyz(eval_texture(environment->emission_tex, texcoord));
+  }
+  return emission;
 }
 
 }  // namespace yocto
