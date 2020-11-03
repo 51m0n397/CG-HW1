@@ -583,13 +583,12 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
       instance->frame, eval_position(instance->shape, element, uv));
   auto textcoord = eval_texcoord(instance->shape, element, uv);
 
-  auto  color    = instance->material->color;
-  vec4f color4   = {color.x, color.y, color.z, 1.0f};
-  auto  texture  = eval_texture(instance->material->color_tex, textcoord);
-  vec4f texture4 = {texture.x, texture.y, texture.z, 1.0f};
+  auto  color   = instance->material->color;
+  vec4f color4  = {color.x, color.y, color.z, 0};
+  auto  texture = eval_texture(instance->material->color_tex, textcoord);
 
   auto  radiance  = instance->material->emission;
-  vec4f radiance4 = {radiance.x, radiance.y, radiance.z, 1.0f};
+  vec4f radiance4 = {radiance.x, radiance.y, radiance.z, 0};
 
   if (bounce >= params.bounces) return radiance4;
 
@@ -599,17 +598,31 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
     // polished metals
     auto  incoming = reflect(outgoing, normal);
     auto  fresnel  = fresnel_schlick(color, normal, outgoing);
-    vec4f fresnel4 = {fresnel.x, fresnel.y, fresnel.z, 1};
+    vec4f fresnel4 = {fresnel.x, fresnel.y, fresnel.z, 0};
     radiance4 += fresnel4 * shade_raytrace(scene, ray3f{position, incoming},
                                 bounce + 1, rng, params);
   } else if (instance->material->metallic && instance->material->roughness) {
     // rough metals
+    auto  incoming = sample_hemisphere(normal, rand2f(rng));
+    auto  halfway  = normalize(outgoing + incoming);
+    auto  fresnel  = fresnel_schlick(color, normal, outgoing);
+    vec4f fresnel4 = {fresnel.x, fresnel.y, fresnel.z, 0};
+
+    radiance4 += (2 * pi) * fresnel4 *
+                 microfacet_distribution(
+                     instance->material->roughness, normal, halfway) *
+                 microfacet_shadowing(instance->material->roughness, normal,
+                     halfway, outgoing, incoming) /
+                 (4 * dot(normal, outgoing) * dot(normal, incoming)) *
+                 shade_raytrace(scene, ray3f{position, incoming}, bounce + 1,
+                     rng, params) *
+                 dot(normal, incoming);
   } else if (instance->material->specular) {
     // rough plastics
   } else {
     // diffuse
     auto incoming = sample_hemisphere(normal, rand2f(rng));
-    radiance4 += (2 * pi) * color4 * texture4 / pi *
+    radiance4 += (2 * pi) * color4 * texture / pi *
                  shade_raytrace(scene, ray3f{position, incoming}, bounce + 1,
                      rng, params) *
                  dot(normal, incoming);
