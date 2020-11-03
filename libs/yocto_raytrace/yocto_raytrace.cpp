@@ -567,7 +567,36 @@ namespace yocto {
 static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
     int bounce, rng_state& rng, const raytrace_params& params) {
   // YOUR CODE GOES HERE -----------------------
-  return {0, 0, 0, 0};
+  auto intersection = intersect_scene_bvh(scene, ray);
+  if (!intersection.hit) {
+    auto env_color = eval_environment(scene, ray);
+    return {env_color.x, env_color.y, env_color.z, 1};
+  }
+
+  auto instance = scene->instances[intersection.instance];
+  auto element  = intersection.element;
+  auto uv       = intersection.uv;
+  auto normal   = transform_direction(
+      instance->frame, eval_normal(instance->shape, element, uv));
+  auto position = transform_point(
+      instance->frame, eval_position(instance->shape, element, uv));
+  auto textcoord = eval_texcoord(instance->shape, element, uv);
+
+  auto  color    = instance->material->color;
+  vec4f color4   = {color.x, color.y, color.z, 1.0f};
+  auto  texture  = eval_texture(instance->material->color_tex, textcoord);
+  vec4f texture4 = {texture.x, texture.y, texture.z, 1.0f};
+
+  auto  radiance  = instance->material->emission;
+  vec4f radiance4 = {radiance.x, radiance.y, radiance.z, 1.0f};
+
+  if (bounce >= params.bounces) return radiance4;
+  auto incoming = sample_hemisphere(normal, rand2f(rng));
+  radiance4 += (2 * pi) * color4 * texture4 / pi *
+               shade_raytrace(
+                   scene, ray3f{position, incoming}, bounce + 1, rng, params) *
+               dot(normal, incoming);
+  return radiance4;
 }
 
 // Eyelight for quick previewing.
