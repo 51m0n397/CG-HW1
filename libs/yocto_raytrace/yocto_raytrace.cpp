@@ -573,6 +573,7 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
     return {env_color.x, env_color.y, env_color.z, 1};
   }
 
+  auto outgoing = -ray.d;
   auto instance = scene->instances[intersection.instance];
   auto element  = intersection.element;
   auto uv       = intersection.uv;
@@ -591,11 +592,29 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
   vec4f radiance4 = {radiance.x, radiance.y, radiance.z, 1.0f};
 
   if (bounce >= params.bounces) return radiance4;
-  auto incoming = sample_hemisphere(normal, rand2f(rng));
-  radiance4 += (2 * pi) * color4 * texture4 / pi *
-               shade_raytrace(
-                   scene, ray3f{position, incoming}, bounce + 1, rng, params) *
-               dot(normal, incoming);
+
+  if (instance->material->transmission) {
+    // polished dielectrics
+  } else if (instance->material->metallic && !instance->material->roughness) {
+    // polished metals
+    auto  incoming = reflect(outgoing, normal);
+    auto  fresnel  = fresnel_schlick(color, normal, outgoing);
+    vec4f fresnel4 = {fresnel.x, fresnel.y, fresnel.z, 1};
+    radiance4 += fresnel4 * shade_raytrace(scene, ray3f{position, incoming},
+                                bounce + 1, rng, params);
+  } else if (instance->material->metallic && instance->material->roughness) {
+    // rough metals
+  } else if (instance->material->specular) {
+    // rough plastics
+  } else {
+    // diffuse
+    auto incoming = sample_hemisphere(normal, rand2f(rng));
+    radiance4 += (2 * pi) * color4 * texture4 / pi *
+                 shade_raytrace(scene, ray3f{position, incoming}, bounce + 1,
+                     rng, params) *
+                 dot(normal, incoming);
+  }
+
   return radiance4;
 }
 
