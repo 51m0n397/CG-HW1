@@ -630,13 +630,14 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
       eval_texture(instance->material->opacity_tex, textcoord, true).x;
 
   if (opacity > 0.999f) opacity = 1;
-  // if (opacity < 0.01f) opacity = 0.01f;
 
   if (rand1f(rng) > opacity) {
     auto incoming = -outgoing;
     return shade_raytrace(
         scene, ray3f{position, incoming}, bounce + 1, rng, params);
   }
+
+  if (dot(normal, outgoing) < 0) normal = -normal;
 
   auto radiance = emission;
   if (bounce >= params.bounces) return {radiance.x, radiance.y, radiance.z, 1};
