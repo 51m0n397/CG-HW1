@@ -151,9 +151,19 @@ static vec3f eval_normal(
     const raytrace_shape* shape, int element, const vec2f& uv) {
   // YOUR CODE GOES HERE -----------------------
   if (shape->normals.empty()) return eval_element_normal(shape, element);
-  auto t = shape->triangles[element];
-  return normalize(interpolate_triangle(
-      shape->normals[t.x], shape->normals[t.y], shape->normals[t.z], uv));
+  if (!shape->triangles.empty()) {
+    auto t = shape->triangles[element];
+    return normalize(interpolate_triangle(
+        shape->normals[t.x], shape->normals[t.y], shape->normals[t.z], uv));
+  } else if (!shape->lines.empty()) {
+    auto l = shape->lines[element];
+    return normalize(
+        interpolate_line(shape->normals[l.x], shape->normals[l.y], uv.x));
+  } else if (!shape->points.empty()) {
+    return normalize(shape->normals[shape->points[element]]);
+  } else {
+    return zero3f;
+  }
 }
 
 // Eval texcoord
@@ -577,59 +587,118 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
   auto instance = scene->instances[intersection.instance];
   auto element  = intersection.element;
   auto uv       = intersection.uv;
-  auto normal   = transform_direction(
+  auto normal   = transform_normal(
       instance->frame, eval_normal(instance->shape, element, uv));
   auto position = transform_point(
       instance->frame, eval_position(instance->shape, element, uv));
   auto textcoord = eval_texcoord(instance->shape, element, uv);
 
-  auto  color   = instance->material->color;
-  vec4f color4  = {color.x, color.y, color.z, 0};
-  auto  texture = eval_texture(instance->material->color_tex, textcoord);
+  auto emission =
+      instance->material->emission *
+      xyz(eval_texture(instance->material->emission_tex, textcoord));
 
-  auto  radiance  = instance->material->emission;
-  vec4f radiance4 = {radiance.x, radiance.y, radiance.z, 0};
+  auto color = instance->material->color *
+               xyz(eval_texture(instance->material->color_tex, textcoord));
 
-  if (bounce >= params.bounces) return radiance4;
+  auto specular =
+      instance->material->specular *
+      eval_texture(instance->material->specular_tex, textcoord, true).x;
 
-  if (instance->material->transmission) {
-    // polished dielectrics
-  } else if (instance->material->metallic && !instance->material->roughness) {
-    // polished metals
-    auto  incoming = reflect(outgoing, normal);
-    auto  fresnel  = fresnel_schlick(color, normal, outgoing);
-    vec4f fresnel4 = {fresnel.x, fresnel.y, fresnel.z, 0};
-    radiance4 += fresnel4 * shade_raytrace(scene, ray3f{position, incoming},
-                                bounce + 1, rng, params);
-  } else if (instance->material->metallic && instance->material->roughness) {
-    // rough metals
-    auto  incoming = sample_hemisphere(normal, rand2f(rng));
-    auto  halfway  = normalize(outgoing + incoming);
-    auto  fresnel  = fresnel_schlick(color, normal, outgoing);
-    vec4f fresnel4 = {fresnel.x, fresnel.y, fresnel.z, 0};
+  auto metallic =
+      instance->material->metallic *
+      eval_texture(instance->material->emission_tex, textcoord, true).x;
 
-    radiance4 += (2 * pi) * fresnel4 *
-                 microfacet_distribution(
-                     instance->material->roughness, normal, halfway) *
-                 microfacet_shadowing(instance->material->roughness, normal,
-                     halfway, outgoing, incoming) /
-                 (4 * dot(normal, outgoing) * dot(normal, incoming)) *
-                 shade_raytrace(scene, ray3f{position, incoming}, bounce + 1,
-                     rng, params) *
-                 dot(normal, incoming);
-  } else if (instance->material->specular) {
-    // rough plastics
-  } else {
-    // diffuse
-    auto incoming = sample_hemisphere(normal, rand2f(rng));
-    radiance4 += (2 * pi) * color4 * texture / pi *
-                 shade_raytrace(scene, ray3f{position, incoming}, bounce + 1,
-                     rng, params) *
-                 dot(normal, incoming);
+  auto roughness =
+      instance->material->roughness *
+      eval_texture(instance->material->roughness_tex, textcoord, true).x;
+  roughness = roughness * roughness;
+
+  auto transmission =
+      instance->material->transmission *
+      eval_texture(instance->material->transmission_tex, textcoord, true).x;
+
+  auto spectint =
+      instance->material->spectint *
+      xyz(eval_texture(instance->material->spectint_tex, textcoord));
+
+  auto scattering =
+      instance->material->scattering *
+      xyz(eval_texture(instance->material->scattering_tex, textcoord));
+
+  auto opacity =
+      instance->material->opacity *
+      eval_texture(instance->material->opacity_tex, textcoord, true).x;
+
+  if (opacity > 0.999f) opacity = 1;
+  // if (opacity < 0.01f) opacity = 0.01f;
+
+  if (rand1f(rng) > opacity) {
+    auto incoming = -outgoing;
+    return shade_raytrace(
+        scene, ray3f{position, incoming}, bounce + 1, rng, params);
   }
 
-  return radiance4;
-}
+  auto radiance = emission;
+  if (bounce >= params.bounces) return {radiance.x, radiance.y, radiance.z, 1};
+  if (transmission) {
+    //<handle polished dielectrics>
+    if (rand1f(rng) <
+        fresnel_schlick(vec3f{0.04, 0.04, 0.04}, normal, outgoing).x) {
+      auto incoming = reflect(outgoing, normal);
+      radiance += xyz(shade_raytrace(
+          scene, ray3f{position, incoming}, bounce + 1, rng, params));
+    } else {
+      auto incoming = -outgoing;
+      radiance += color * xyz(shade_raytrace(scene, ray3f{position, incoming},
+                              bounce + 1, rng, params));
+    }
+  } else if (metallic && !roughness) {
+    //<handle polished metals>
+    auto incoming = reflect(outgoing, normal);
+    radiance += fresnel_schlick(color, normal, outgoing) *
+                xyz(shade_raytrace(
+                    scene, ray3f{position, incoming}, bounce + 1, rng, params));
+  } else if (metallic && roughness) {
+    //<handle rough metals>
+    auto incoming = sample_hemisphere(normal, rand2f(rng));
+    auto halfway  = normalize(outgoing + incoming);
+    radiance +=
+        (2 * pi) * fresnel_schlick(color, normal, outgoing) *
+        microfacet_distribution(roughness, normal, halfway) *
+        microfacet_shadowing(roughness, normal, halfway, outgoing, incoming) /
+        (4 * dot(normal, outgoing) * dot(normal, incoming)) *
+        xyz(shade_raytrace(
+            scene, ray3f{position, incoming}, bounce + 1, rng, params)) *
+        dot(normal, incoming);
+  } else if (specular) {
+    //<handle rough plastic>
+    auto incoming = sample_hemisphere(normal, rand2f(rng));
+    auto halfway  = normalize(outgoing + incoming);
+
+    radiance +=
+        (2 * pi) *
+        (color / pi *
+                (1 - fresnel_schlick(
+                         vec3f{0.04, 0.04, 0.04}, halfway, outgoing)) +
+            fresnel_schlick(vec3f{0.04, 0.04, 0.04}, halfway, outgoing) *
+                microfacet_distribution(roughness, normal, halfway) *
+                microfacet_shadowing(
+                    roughness, normal, halfway, outgoing, incoming) /
+                (4 * dot(normal, outgoing) * dot(normal, incoming))) *
+        xyz(shade_raytrace(
+            scene, ray3f{position, incoming}, bounce + 1, rng, params)) *
+        dot(normal, incoming);
+  } else {
+    //<handle diffuse>
+    auto incoming = sample_hemisphere(normal, rand2f(rng));
+    radiance += (2 * pi) * color / pi *
+                xyz(shade_raytrace(scene, ray3f{position, incoming}, bounce + 1,
+                    rng, params)) *
+                dot(normal, incoming);
+  }
+
+  return {radiance.x, radiance.y, radiance.z, 1};
+}  // namespace yocto
 
 // Eyelight for quick previewing.
 static vec4f shade_eyelight(const raytrace_scene* scene, const ray3f& ray,
@@ -642,7 +711,7 @@ static vec4f shade_eyelight(const raytrace_scene* scene, const ray3f& ray,
   auto instance = scene->instances[intersection.instance];
   auto element  = intersection.element;
   auto uv       = intersection.uv;
-  auto normal   = transform_direction(
+  auto normal   = transform_normal(
       instance->frame, eval_normal(instance->shape, element, uv));
   auto color = instance->material->color * dot(normal, -ray.d);
   return {color.x, color.y, color.z, 1};
@@ -658,7 +727,7 @@ static vec4f shade_normal(const raytrace_scene* scene, const ray3f& ray,
   auto instance = scene->instances[intersection.instance];
   auto element  = intersection.element;
   auto uv       = intersection.uv;
-  auto normal   = transform_direction(
+  auto normal   = transform_normal(
       instance->frame, eval_normal(instance->shape, element, uv));
   return {normal.x * 0.5f + 0.5f, normal.y * 0.5f + 0.5f,
       normal.z * 0.5f + 0.5f, 1};
