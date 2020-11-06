@@ -664,7 +664,7 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
     auto incoming = sample_hemisphere(normal, rand2f(rng));
     auto halfway  = normalize(outgoing + incoming);
     radiance +=
-        (2 * pi) * fresnel_schlick(color, normal, outgoing) *
+        (2 * pi) * fresnel_schlick(color, halfway, outgoing) *
         microfacet_distribution(roughness, normal, halfway) *
         microfacet_shadowing(roughness, normal, halfway, outgoing, incoming) /
         (4 * dot(normal, outgoing) * dot(normal, incoming)) *
