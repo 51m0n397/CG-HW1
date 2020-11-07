@@ -587,8 +587,20 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
   auto instance = scene->instances[intersection.instance];
   auto element  = intersection.element;
   auto uv       = intersection.uv;
-  auto normal   = transform_normal(
-      instance->frame, eval_normal(instance->shape, element, uv));
+  auto normal   = zero3f;
+
+  if (!instance->shape->triangles.empty()) {
+    normal = transform_normal(
+        instance->frame, eval_normal(instance->shape, element, uv));
+    if (instance->material->thin && dot(normal, outgoing) < 0) normal = -normal;
+  } else if (!instance->shape->lines.empty()) {
+    normal = orthonormalize(
+        outgoing, transform_normal(instance->frame,
+                      eval_normal(instance->shape, element, uv)));
+  } else if (!instance->shape->points.empty()) {
+    normal = -outgoing;
+  }
+
   auto position = transform_point(
       instance->frame, eval_position(instance->shape, element, uv));
   auto textcoord = eval_texcoord(instance->shape, element, uv);
@@ -636,8 +648,6 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
     return shade_raytrace(
         scene, ray3f{position, incoming}, bounce + 1, rng, params);
   }
-
-  if (dot(normal, outgoing) < 0) normal = -normal;
 
   auto radiance = emission;
   if (bounce >= params.bounces) return {radiance.x, radiance.y, radiance.z, 1};
