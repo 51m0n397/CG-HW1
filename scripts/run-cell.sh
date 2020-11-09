@@ -1,0 +1,12 @@
+./bin/yraytrace tests/01_cornellbox/cornellbox.json -o out/cell/01_cornellbox.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/02_matte/matte.json -o out/cell/02_matte.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/03_texture/texture.json -o out/cell/03_texture.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/04_envlight/envlight.json -o out/cell/04_envlight.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/05_arealight/arealight.json -o out/cell/05_arealight.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/06_metal/metal.json -o out/cell/06_metal.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/07_plastic/plastic.json -o out/cell/07_plastic.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/08_glass/glass.json -o out/cell/08_glass.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/09_opacity/opacity.json -o out/cell/09_opacity.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/10_hair/hair.json -o out/cell/10_hair.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/11_bathroom1/bathroom1.json -o out/cell/11_bathroom1.jpg -s 9 -t cell -r 1280
+./bin/yraytrace tests/12_ecosys/ecosys.json -o out/cell/12_ecosys.jpg -s 9 -t cell -r 1280

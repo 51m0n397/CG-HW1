@@ -588,11 +588,15 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
   auto element  = intersection.element;
   auto uv       = intersection.uv;
   auto normal   = zero3f;
+  auto eta      = reflectivity_to_eta(vec3f{0.04, 0.04, 0.04});
 
   if (!instance->shape->triangles.empty()) {
     normal = transform_normal(
         instance->frame, eval_normal(instance->shape, element, uv));
-    if (instance->material->thin && dot(normal, outgoing) < 0) normal = -normal;
+    if (dot(normal, outgoing) < 0) {
+      normal = -normal;
+      eta    = 1 / eta;
+    }
   } else if (!instance->shape->lines.empty()) {
     normal = orthonormalize(
         outgoing, transform_normal(instance->frame,
@@ -629,14 +633,6 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
       instance->material->transmission *
       eval_texture(instance->material->transmission_tex, textcoord, true).x;
 
-  auto spectint =
-      instance->material->spectint *
-      xyz(eval_texture(instance->material->spectint_tex, textcoord));
-
-  auto scattering =
-      instance->material->scattering *
-      xyz(eval_texture(instance->material->scattering_tex, textcoord));
-
   auto opacity =
       instance->material->opacity *
       eval_texture(instance->material->opacity_tex, textcoord, true).x;
@@ -660,6 +656,10 @@ static vec4f shade_raytrace(const raytrace_scene* scene, const ray3f& ray,
           scene, ray3f{position, incoming}, bounce + 1, rng, params));
     } else {
       auto incoming = -outgoing;
+      if (!instance->material->thin) {
+        incoming = refract(outgoing, normal, 1 / eta.x);
+      }
+
       radiance += color * xyz(shade_raytrace(scene, ray3f{position, incoming},
                               bounce + 1, rng, params));
     }
@@ -770,6 +770,181 @@ static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
   return {color.x, color.y, color.z, 1};
 }
 
+static vec4f shade_cell(const raytrace_scene* scene, const ray3f& ray,
+    int bounce, rng_state& rng, const raytrace_params& params) {
+  // YOUR CODE GOES HERE -----------------------
+  auto intersection = intersect_scene_bvh(scene, ray);
+  if (!intersection.hit) {
+    auto env_color = eval_environment(scene, ray);
+    return {env_color.x, env_color.y, env_color.z, 1};
+  }
+
+  auto outgoing = -ray.d;
+  auto instance = scene->instances[intersection.instance];
+  auto element  = intersection.element;
+  auto uv       = intersection.uv;
+  auto normal   = zero3f;
+
+  if (!instance->shape->triangles.empty()) {
+    normal = transform_normal(
+        instance->frame, eval_normal(instance->shape, element, uv));
+    if (dot(normal, outgoing) < 0) {
+      normal = -normal;
+    }
+  } else if (!instance->shape->lines.empty()) {
+    normal = orthonormalize(
+        outgoing, transform_normal(instance->frame,
+                      eval_normal(instance->shape, element, uv)));
+  } else if (!instance->shape->points.empty()) {
+    normal = -outgoing;
+  }
+
+  auto specularColor = vec3f{0.9, 0.9, 0.9};
+  auto glossiness    = 32.0f;
+  auto rimColor      = vec3f{1, 1, 1};
+  auto rimAmount     = 0.716f;
+  auto rimThreshold  = 0.1f;
+
+  auto position = transform_point(
+      instance->frame, eval_position(instance->shape, element, uv));
+  auto textcoord = eval_texcoord(instance->shape, element, uv);
+
+  auto emission =
+      instance->material->emission *
+      xyz(eval_texture(instance->material->emission_tex, textcoord));
+
+  auto color = instance->material->color *
+               xyz(eval_texture(instance->material->color_tex, textcoord));
+
+  auto specular =
+      instance->material->specular *
+      eval_texture(instance->material->specular_tex, textcoord, true).x;
+
+  auto metallic =
+      instance->material->metallic *
+      eval_texture(instance->material->emission_tex, textcoord, true).x;
+
+  auto roughness =
+      instance->material->roughness *
+      eval_texture(instance->material->roughness_tex, textcoord, true).x;
+  roughness = roughness * roughness;
+
+  auto transmission =
+      instance->material->transmission *
+      eval_texture(instance->material->transmission_tex, textcoord, true).x;
+
+  auto opacity =
+      instance->material->opacity *
+      eval_texture(instance->material->opacity_tex, textcoord, true).x;
+
+  if (opacity > 0.999f) opacity = 1;
+
+  if (rand1f(rng) > opacity) {
+    auto incoming = -outgoing;
+    return shade_cell(scene, ray3f{position, incoming}, bounce, rng, params);
+  }
+
+  auto radiance = emission;
+
+  if (metallic) {
+    glossiness *= (1 - roughness);
+  }
+
+  if (bounce >= params.bounces) return {radiance.x, radiance.y, radiance.z, 1};
+
+  for (auto elem : scene->instances) {
+    // treat every emissive object as a pointlight
+    if (elem->material->emission != zero3f) {
+      // the position of the pointlight is the average of the positions
+      // of the elements of the emissive object
+      auto pos = zero3f;
+      for (auto positon : elem->shape->positions) {
+        pos += positon;
+      }
+      pos /= elem->shape->positions.size();
+      auto lightPos   = transform_point(elem->frame, pos);
+      auto lightColor = elem->material->emission / 20;
+
+      auto shadowInt = intersect_scene_bvh(
+          scene, ray3f{position, normalize(lightPos - position)});
+      auto shadow = shadowInt.hit &&
+                    scene->instances[shadowInt.instance] != elem;
+      if (shadow) {
+        auto instance  = scene->instances[shadowInt.instance];
+        auto element   = shadowInt.element;
+        auto uv        = shadowInt.uv;
+        auto textcoord = eval_texcoord(instance->shape, element, uv);
+        auto opacity =
+            instance->material->opacity *
+            eval_texture(instance->material->opacity_tex, textcoord, true).x;
+        shadow *= opacity;
+      }
+      shadow = !shadow;
+
+      auto lightDir          = lightPos - position;
+      auto distance          = length(lightDir);
+      distance               = distance * distance;
+      lightDir               = normalize(lightDir);
+      auto NdotL             = dot(lightDir, normal);
+      auto lightIntensity    = smoothstep(0.3, 0.35, NdotL * shadow);
+      auto light             = lightIntensity * lightColor;
+      auto halfVector        = normalize(lightPos + outgoing);
+      auto NdotH             = dot(normal, halfVector);
+      auto specularIntensity = pow(
+          NdotH * lightIntensity, glossiness * glossiness);
+      auto specularIntensitySmooth = smoothstep(0.005, 0.01, specularIntensity);
+      auto specularHighlight       = specularIntensitySmooth * specularColor;
+      auto rimDot                  = 1 - dot(outgoing, normal);
+      auto rimIntensity            = rimDot * pow(NdotL, rimThreshold);
+      rimIntensity                 = smoothstep(
+          rimAmount - 0.01, rimAmount + 0.01, rimIntensity);
+      auto rim = rimIntensity * rimColor;
+
+      if (transmission) {
+        //<handle polished dielectrics>
+
+        radiance += color * ((light + lightColor / 10) / 10 * distance +
+                                specularHighlight + rim / 2);
+
+      } else if (metallic && !roughness) {
+        //<handle polished metals>
+        radiance +=
+            color *
+            ((light + lightColor / 10) / distance + specularHighlight + rim) /
+            5;
+
+      } else if (metallic && roughness) {
+        //<handle rough metals>
+        radiance += color * ((light + lightColor / 10) / distance +
+                                specularHighlight + rim);
+      } else if (specular) {
+        //<handle rough plastic>
+        radiance += color * ((light + lightColor / 10) / distance +
+                                specularHighlight + rim);
+      } else {
+        radiance += color * ((light + lightColor / 10) / distance);
+      }
+    }
+  }
+
+  auto incoming = -outgoing;
+  if (transmission) {
+    radiance += color *
+                (xyz(shade_cell(scene, ray3f{position, incoming}, bounce + 1,
+                     rng, params)) +
+                    eval_environment(scene, ray3f{position, normal}) / 5);
+  } else if (metallic && !roughness) {
+    auto incoming = reflect(outgoing, normal);
+    radiance += fresnel_schlick(color, normal, outgoing) *
+                xyz(shade_cell(
+                    scene, ray3f{position, incoming}, bounce + 1, rng, params));
+  } else {
+    radiance += color * eval_environment(scene, ray3f{zero3f, vec3f{0, 1, 0}});
+  }
+
+  return {radiance.x, radiance.y, radiance.z, 1};
+}
+
 // Trace a single ray from the camera using the given algorithm.
 using raytrace_shader_func = vec4f (*)(const raytrace_scene* scene,
     const ray3f& ray, int bounce, rng_state& rng,
@@ -781,6 +956,7 @@ static raytrace_shader_func get_shader(const raytrace_params& params) {
     case raytrace_shader_type::normal: return shade_normal;
     case raytrace_shader_type::texcoord: return shade_texcoord;
     case raytrace_shader_type::color: return shade_color;
+    case raytrace_shader_type::cell: return shade_cell;
     default: {
       throw std::runtime_error("sampler unknown");
       return nullptr;

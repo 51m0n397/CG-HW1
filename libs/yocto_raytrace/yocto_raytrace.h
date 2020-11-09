@@ -280,6 +280,7 @@ enum struct raytrace_shader_type {
   normal,    // normals
   texcoord,  // texcoords
   color,     // colors
+  cell,      // cell shading
              // clang-format off
 };
 
@@ -299,7 +300,7 @@ struct raytrace_params {
 };
 
 const auto raytrace_shader_names = vector<string>{
-    "raytrace", "eyelight", "normal", "texcoord", "color"};
+    "raytrace", "eyelight", "normal", "texcoord", "color", "cell"};
 
 // Progress report callback
 using progress_callback =
