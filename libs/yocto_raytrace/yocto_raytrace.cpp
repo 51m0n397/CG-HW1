@@ -770,9 +770,32 @@ static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
   return {color.x, color.y, color.z, 1};
 }
 
+/* This shader is inspired by the toon shader in
+ * https://roystan.net/articles/toon-shader.html.
+ * I've made some changes both to experiment and for aesthetic reasons.
+ * The shader treats every emissive object as a pointlight positioned in the
+ * center of the object.
+ * The color of a pixel is obtained by summing the effects of every pointlight.
+ * To approximate the ambient light, 10% of the light color for each pointlight
+ * is added in the calculation even when the object is in shadow.
+ * To model the effects of the environment the color of the "sky", obtained by
+ * calling eval_environment with a ray that starts from {0,0,0} and goes up, is
+ * added in the calculation.
+ * Shadows are calculated by casting a ray from a pixel in the direction of the
+ * light: if the ray intersects an object that is opaque and is not the
+ * light-emitting object for which we are calculating shadows the pixel is
+ * considered in shadow.
+ * Unlike in the shader from the link I've decided to consider also the distance
+ * from the light source in the calculation to add a bit of depth.
+ * I've also made some changes to model different materials:
+ * - matte objects have no specular highlight and rim lighting;
+ * - glass objects have a color that is a combination of their own color and of
+ *   what is behind them to mimic transparency;
+ * - polished metals reflect the environment.
+ */
+
 static vec4f shade_cell(const raytrace_scene* scene, const ray3f& ray,
     int bounce, rng_state& rng, const raytrace_params& params) {
-  // YOUR CODE GOES HERE -----------------------
   auto intersection = intersect_scene_bvh(scene, ray);
   if (!intersection.hit) {
     auto env_color = eval_environment(scene, ray);
@@ -853,17 +876,15 @@ static vec4f shade_cell(const raytrace_scene* scene, const ray3f& ray,
   if (bounce >= params.bounces) return {radiance.x, radiance.y, radiance.z, 1};
 
   for (auto elem : scene->instances) {
-    // treat every emissive object as a pointlight
     if (elem->material->emission != zero3f) {
-      // the position of the pointlight is the average of the positions
-      // of the elements of the emissive object
       auto pos = zero3f;
       for (auto positon : elem->shape->positions) {
         pos += positon;
       }
       pos /= elem->shape->positions.size();
-      auto lightPos   = transform_point(elem->frame, pos);
-      auto lightColor = elem->material->emission / 20;
+      auto lightPos     = transform_point(elem->frame, pos);
+      auto lightColor   = elem->material->emission / 20;
+      auto ambientColor = lightColor / 10;
 
       auto shadowInt = intersect_scene_bvh(
           scene, ray3f{position, normalize(lightPos - position)});
@@ -903,43 +924,44 @@ static vec4f shade_cell(const raytrace_scene* scene, const ray3f& ray,
       if (transmission) {
         //<handle polished dielectrics>
 
-        radiance += color * ((light + lightColor / 10) / 10 * distance +
+        radiance += color * ((light + ambientColor) / 10 * distance +
                                 specularHighlight + rim / 2);
 
       } else if (metallic && !roughness) {
         //<handle polished metals>
         radiance +=
             color *
-            ((light + lightColor / 10) / distance + specularHighlight + rim) /
-            5;
+            ((light + ambientColor) / distance + specularHighlight + rim) / 5;
 
       } else if (metallic && roughness) {
         //<handle rough metals>
-        radiance += color * ((light + lightColor / 10) / distance +
+        radiance += color * ((light + ambientColor) / distance +
                                 specularHighlight + rim);
       } else if (specular) {
         //<handle rough plastic>
-        radiance += color * ((light + lightColor / 10) / distance +
+        radiance += color * ((light + ambientColor) / distance +
                                 specularHighlight + rim);
       } else {
-        radiance += color * ((light + lightColor / 10) / distance);
+        radiance += color * ((light + ambientColor) / distance);
       }
     }
   }
 
+  auto env_color = eval_environment(scene, ray3f{zero3f, vec3f{0, 1, 0}});
+
   auto incoming = -outgoing;
   if (transmission) {
-    radiance += color *
-                (xyz(shade_cell(scene, ray3f{position, incoming}, bounce + 1,
-                     rng, params)) +
-                    eval_environment(scene, ray3f{position, normal}) / 5);
+    radiance += color * (xyz(shade_cell(scene, ray3f{position, incoming},
+                             bounce + 1, rng, params)) +
+                            env_color / 10);
   } else if (metallic && !roughness) {
     auto incoming = reflect(outgoing, normal);
-    radiance += fresnel_schlick(color, normal, outgoing) *
-                xyz(shade_cell(
-                    scene, ray3f{position, incoming}, bounce + 1, rng, params));
+    radiance += color * env_color / 10 +
+                fresnel_schlick(color, normal, outgoing) *
+                    xyz(shade_cell(scene, ray3f{position, incoming}, bounce + 1,
+                        rng, params));
   } else {
-    radiance += color * eval_environment(scene, ray3f{zero3f, vec3f{0, 1, 0}});
+    radiance += color * env_color;
   }
 
   return {radiance.x, radiance.y, radiance.z, 1};
