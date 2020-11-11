@@ -773,10 +773,10 @@ static vec4f shade_color(const raytrace_scene* scene, const ray3f& ray,
 /* This shader is inspired by the toon shader in
  * https://roystan.net/articles/toon-shader.html.
  * I've made some changes both to experiment and for aesthetic reasons.
- * The shader treats every emissive object as a pointlight positioned in the
+ * The shader treats every emissive object as a point-light positioned in the
  * center of the object.
- * The color of a pixel is obtained by summing the effects of every pointlight.
- * To approximate the ambient light, 10% of the light color for each pointlight
+ * The color of a pixel is obtained by summing the effects of every point-light.
+ * To approximate the ambient light, 10% of the light color for each point-light
  * is added in the calculation even when the object is in shadow.
  * To model the effects of the environment the color of the "sky", obtained by
  * calling eval_environment with a ray that starts from {0,0,0} and goes up, is
